@@ -1,3 +1,15 @@
 -r base.in
+# until https://gitlab.com/pycqa/flake8-docstrings/issues/36 is fixed
+pydocstyle<4.0.0
 mypy
 tox
+async_generator
+coverage
+flake8
+flake8_docstrings
+mock
+pytest
+pytest-asyncio
+pytest-black
+pytest-cov
+pytest-mock

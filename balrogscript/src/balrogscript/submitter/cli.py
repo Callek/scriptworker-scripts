@@ -293,6 +293,7 @@ class NightlySubmitterBase(object):
         self, platform, buildID, productName, branch, appVersion, locale, hashFunction, extVersion, schemaVersion, isOSUpdate=None, **updateKwargs
     ):
         log.info("Using backend version 2...")
+        assert schemaVersion in (3, 4), "Unhandled schema version %s" % schemaVersion
         session = get_balrog_session(auth0_secrets=self.auth0_secrets)
 
         targets = buildbot2updatePlatforms(platform)
@@ -300,12 +301,22 @@ class NightlySubmitterBase(object):
         alias = None
         if len(targets) > 1:
             alias = targets[1:]
-            log.debug("alias entry of %s ignored...", json.dumps(alias))
         data = {"buildID": buildID, "appVersion": appVersion, "platformVersion": extVersion, "displayVersion": appVersion}
 
         data.update(self._get_update_data(productName, branch, **updateKwargs))
 
         build_type = self.build_type
+
+        def maybe_create_release(name, url):
+            try:
+                blob = {"appVersion": appVersion, "platformVersion": extVersion, "displayVersion": appVersion}
+                blob["schema_version"] = schemaVersion
+                blob["hashFunction"] = hashFunction
+                blob["name"] = name
+                new_release_data = {"product": productName, "blob": blob}
+                return balrog_request(session, "put", url, json=new_release_data)
+            except Exception as e:
+                print(e)
 
         # wrap operations into "atomic" functions that can be retried
         def update_data(url, existing_release, existing_locale_data):
@@ -321,8 +332,12 @@ class NightlySubmitterBase(object):
                 return
             # explicitly pass data version
             new_data = {"blob": {"platforms": {build_target: {"locales": {locale: data}}}}, "old_data_versions": {"platforms": {build_target: {"locales": {}}}}}
-            if existing_release.get("old_data_versions", {}).get("platforms", {}).get(build_target, {}).get("locales", {}).get(locale):
-                new_data["old_data_versions"]["platforms"][build_target]["locales"][locale] = existing_release["old_data_versions"]["platforms"][build_target][
+            if alias:
+                new_data["old_data_versions"]["."] = existing_release["data_versions"]["."]
+                for aliasedPlatform in alias:
+                    new_data["blob"]["platforms"][aliasedPlatform] = {"alias": build_target}
+            if existing_release.get("data_versions", {}).get("platforms", {}).get(build_target, {}).get("locales", {}).get(locale):
+                new_data["old_data_versions"]["platforms"][build_target]["locales"][locale] = existing_release["data_versions"]["platforms"][build_target][
                     "locales"
                 ][locale]
             balrog_request(session, "post", url, json=new_data)
@@ -330,6 +345,7 @@ class NightlySubmitterBase(object):
         for identifier in (buildID, "latest"):
             name = get_nightly_blob_name(productName, branch, build_type, identifier, self.dummy)
             url = self.api_root + "/v2/releases/" + name
+            maybe_create_release(name, url)
             try:
                 existing_release = balrog_request(session, "get", url)
             except HTTPError as excp:
